@@ -1,7 +1,8 @@
 # Clash 订阅转换模板合集
 
 
-项目施工中！尚不完善
+2026/2/18：本项目暂不维护
+
 
 本项目为 [Custom_OpenClash_Rules](https://github.com/Aethersailor/Custom_OpenClash_Rules) 项目的衍生项目，目的在其他 Clash 软件中实现相近的使用体验。
 
