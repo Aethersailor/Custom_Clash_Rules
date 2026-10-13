@@ -1,0 +1,15 @@
+version: 2
+updates:
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: daily
+    time: 08:00
+    timezone: Asia/Shanghai
+  open-pull-requests-limit: 20
+  groups:
+    dependencies:
+      patterns:
+      - '*'
+  commit-message:
+    prefix: chore(deps)

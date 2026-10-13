@@ -1,0 +1,87 @@
+name: Dependabot auto-merge
+'on':
+  pull_request_target:
+    types:
+    - opened
+    - reopened
+    - synchronize
+    - ready_for_review
+  schedule:
+  - cron: 7 */6 * * *
+  workflow_dispatch: null
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+concurrency:
+  group: dependabot-auto-merge
+  cancel-in-progress: false
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Merge current Dependabot updates
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      env:
+        AFTER_MERGE_WORKFLOWS: '["codeql.yml"]'
+      with:
+        script: |
+          const repo = context.repo;
+          const {data: repository} = await github.rest.repos.get(repo);
+          const base = repository.default_branch;
+          const pulls = await github.paginate(github.rest.pulls.list, {...repo, state: 'open', base, per_page: 100});
+          const manifests = /(^|\/)(package(?:-lock)?\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|go\.(mod|sum)|requirements[^/]*\.txt|pyproject\.toml|uv\.lock|Pipfile(?:\.lock)?|poetry\.lock|setup\.(py|cfg)|Cargo\.(toml|lock)|Gemfile(?:\.lock)?|composer\.(json|lock)|\.gitmodules|Dockerfile[^/]*|[^/]+\.dockerfile)$/i;
+          let merged = 0;
+          for (const candidate of pulls) {
+            let {data: pr} = await github.rest.pulls.get({...repo, pull_number: candidate.number});
+            if (pr.user.login !== 'dependabot[bot]' || pr.user.type !== 'Bot' || pr.draft ||
+                pr.base.ref !== base || pr.head.repo?.full_name !== repository.full_name ||
+                !pr.head.ref.startsWith('dependabot/')) continue;
+            const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100});
+            if (!files.length || !files.every(file => manifests.test(file.filename) ||
+                /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename) ||
+                /^\.github\/actions\/.+\/action\.ya?ml$/.test(file.filename))) {
+              core.warning(`PR #${pr.number} contains changes outside dependency files.`);
+              continue;
+            }
+            const {data: commit} = await github.rest.repos.getCommit({...repo, ref: pr.head.sha});
+            if (!commit.commit.verification?.verified) {
+              core.warning(`PR #${pr.number} does not have a verified head commit.`);
+              continue;
+            }
+            if (pr.mergeable === null) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              ({data: pr} = await github.rest.pulls.get({...repo, pull_number: pr.number}));
+            }
+            if (!pr.mergeable) {
+              try {
+                await github.rest.pulls.updateBranch({...repo, pull_number: pr.number, expected_head_sha: pr.head.sha});
+                core.info(`Updated PR #${pr.number}; a later event or scheduled run will merge it.`);
+              } catch (error) {
+                if (![403, 409, 422].includes(error.status)) throw error;
+                core.warning(`PR #${pr.number} is awaiting Dependabot conflict reconciliation: ${error.message}`);
+              }
+              continue;
+            }
+            try {
+              const result = await github.rest.pulls.merge({...repo, pull_number: pr.number, sha: pr.head.sha, merge_method: 'squash'});
+              if (!result.data.merged) continue;
+              merged++;
+              core.info(`Merged Dependabot PR #${pr.number} at ${result.data.sha}.`);
+            } catch (error) {
+              if (![405, 409, 422].includes(error.status)) throw error;
+              core.warning(`PR #${pr.number} changed or is not mergeable yet: ${error.message}`);
+            }
+          }
+          if (merged) {
+            const workflows = JSON.parse(process.env.AFTER_MERGE_WORKFLOWS);
+            for (const workflow_id of workflows) {
+              try {
+                await github.rest.actions.createWorkflowDispatch({...repo, workflow_id, ref: base});
+              } catch (error) {
+                core.warning(`Post-merge workflow ${workflow_id} could not be dispatched: ${error.message}`);
+              }
+            }
+          }
+          await core.summary.addRaw(`Merged ${merged} Dependabot pull request(s). CodeQL and builds do not gate merging.`).write();
