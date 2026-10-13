@@ -45,6 +45,11 @@ jobs:
               core.warning(`PR #${pr.number} contains changes outside dependency files.`);
               continue;
             }
+            if (files.some(file => file.filename.startsWith(".github/workflows/") ||
+                file.filename.startsWith(".github/actions/"))) {
+              core.info(`PR #${pr.number} workflow dependency updates are handled automatically by the authorized GitHub App: https://github.com/Aethersailor/bark-worker/actions/workflows/dependabot-workflow-maintenance.yml`);
+              continue;
+            }
             const {data: commit} = await github.rest.repos.getCommit({...repo, ref: pr.head.sha});
             if (!commit.commit.verification?.verified) {
               core.warning(`PR #${pr.number} does not have a verified head commit.`);
