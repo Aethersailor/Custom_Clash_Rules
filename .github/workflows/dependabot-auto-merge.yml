@@ -70,7 +70,7 @@ jobs:
               merged++;
               core.info(`Merged Dependabot PR #${pr.number} at ${result.data.sha}.`);
             } catch (error) {
-              if (![405, 409, 422].includes(error.status)) throw error;
+              if (![403, 405, 409, 422].includes(error.status)) throw error;
               core.warning(`PR #${pr.number} changed or is not mergeable yet: ${error.message}`);
             }
           }
